@@ -1,6 +1,7 @@
 """首次启动时初始化数据库：建表 + 内置管理员 + 种子业务数据。"""
 from datetime import datetime, timedelta
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .auth import hash_password
@@ -16,9 +17,29 @@ def init_db() -> None:
     try:
         _seed_admin(db)
         _seed_business(db)
+        _backfill_vehicle_swap_time(db)
         db.commit()
     finally:
         db.close()
+
+
+def _backfill_vehicle_swap_time(db: Session) -> None:
+    """从历史换电记录回填车辆最近换电时间闸（幂等）。
+
+    last_swapped_at 是离线防倒写的依据；存量数据（含在线记录）若该列为空，
+    按该车辆所有换电记录的最大业务时间补齐，使旧数据同样受时间闸保护。
+    """
+    rows = (
+        db.query(Vehicle.id, func.max(SwapRecord.swapped_at))
+        .join(SwapRecord, SwapRecord.vehicle_id == Vehicle.id)
+        .filter(Vehicle.last_swapped_at.is_(None))
+        .group_by(Vehicle.id)
+        .all()
+    )
+    for vid, latest in rows:
+        vehicle = db.get(Vehicle, vid)
+        if vehicle is not None and latest is not None:
+            vehicle.last_swapped_at = latest
 
 
 def _seed_admin(db: Session) -> None:

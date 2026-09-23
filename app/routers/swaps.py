@@ -1,4 +1,6 @@
 """换电记录路由（需登录）。"""
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -47,9 +49,14 @@ def create_swap(payload: SwapCreate, db: Session = Depends(get_db)):
         station_id=payload.station_id,
         soc_before=payload.soc_before,
         soc_after=payload.soc_after,
+        source_kind="online",
     )
-    # 换电后更新车辆电量、扣减站点可用电池
+    # 换电后更新车辆电量、扣减站点可用电池；
+    # 刷新车辆最近换电时间闸，使任何晚到的旧离线事件无法倒写本次在线交易的结果
+    now = datetime.utcnow()
+    record.swapped_at = now
     vehicle.current_soc = payload.soc_after
+    vehicle.last_swapped_at = now
     station.battery_ready -= 1
     db.add(record)
     db.commit()
