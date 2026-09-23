@@ -16,9 +16,30 @@ def init_db() -> None:
     try:
         _seed_admin(db)
         _seed_business(db)
+        _backfill_soc_baseline(db)
         db.commit()
     finally:
         db.close()
+
+
+def _backfill_soc_baseline(db: Session) -> None:
+    """为升级前已存在的车辆建立电量时间线基线。
+
+    旧数据没有 soc_updated_at，取该车辆最近一笔换电记录的结果与业务时间回填，
+    使「旧离线事件不得倒写在线电量」的判定对所有在管车辆都成立。无换电记录
+    的车辆保持未跟踪状态（首次在线/离线写入时自然纳入时间线）。
+    """
+    vehicles = db.query(Vehicle).filter(Vehicle.soc_updated_at.is_(None)).all()
+    for vehicle in vehicles:
+        latest = (
+            db.query(SwapRecord)
+            .filter(SwapRecord.vehicle_id == vehicle.id)
+            .order_by(SwapRecord.swapped_at.desc(), SwapRecord.id.desc())
+            .first()
+        )
+        if latest is not None:
+            vehicle.current_soc = latest.soc_after
+            vehicle.soc_updated_at = latest.swapped_at
 
 
 def _seed_admin(db: Session) -> None:

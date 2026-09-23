@@ -6,14 +6,22 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from .routers import auth, dashboard, stations, swaps, vehicles
+from .database import SessionLocal
+from .routers import auth, dashboard, stations, swaps, sync, vehicles
 from .seed import init_db
+from .services import sync_service
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 启动时初始化数据库（建表 + 种子数据）
     init_db()
+    # 基于持久化状态恢复所有终端待处理队列，服务重启不丢、自动续推
+    db = SessionLocal()
+    try:
+        sync_service.recover_pending(db)
+    finally:
+        db.close()
     yield
 
 
@@ -34,4 +42,5 @@ app.include_router(auth.router)
 app.include_router(stations.router)
 app.include_router(vehicles.router)
 app.include_router(swaps.router)
+app.include_router(sync.router)
 app.include_router(dashboard.router)
